@@ -1,0 +1,18 @@
+[project]
+name = "dvc-ssh-manager"
+version = "0.1.0"
+description = "A Python tool to automate the setup and management of DVC remotes using SSH."
+authors = [{ name = "Jules", email = "jules@example.com" }]
+requires-python = ">=3.8"
+dependencies = [
+    "dvc",
+    "paramiko",
+    "click",
+    "pytest"
+]
+
+[project.scripts]
+dvc-ssh = "dvc_ssh_manager:main"
+
+[tool.setuptools]
+py-modules = ["dvc_ssh_manager"]

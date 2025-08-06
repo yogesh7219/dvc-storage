@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: dvc-ssh-manager
+Version: 0.1.0
+Summary: A Python tool to automate the setup and management of DVC remotes using SSH.
+Author-email: Jules <jules@example.com>
+Requires-Python: >=3.8
+Requires-Dist: dvc
+Requires-Dist: paramiko
+Requires-Dist: click
+Requires-Dist: pytest

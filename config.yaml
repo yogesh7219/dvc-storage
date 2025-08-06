@@ -1,0 +1,18 @@
+# Sample configuration for the DVC SSH Manager
+
+# SSH connection details
+ssh:
+  host: "your_server_hostname"
+  user: "your_username"
+  port: 22
+
+# DVC remote configuration
+dvc:
+  remote_name: "storage"
+  remote_path: "/path/to/dvc/storage"
+
+# SSH key configuration
+keys:
+  private_key_path: "~/.ssh/dvc_id_rsa"
+  public_key_path: "~/.ssh/dvc_id_rsa.pub"
+  comment: "dvc-ssh-manager-key"
