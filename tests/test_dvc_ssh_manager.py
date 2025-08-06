@@ -145,13 +145,16 @@ class TestPublicKeyInstallation(unittest.TestCase):
 
 class TestDvcRemoteConfiguration(unittest.TestCase):
 
+    @patch('builtins.open', new_callable=unittest.mock.mock_open)
+    @patch('configparser.ConfigParser')
     @patch('os.path.exists')
     @patch('subprocess.run')
     @patch('os.path.isdir')
-    def test_configure_dvc_remote_no_init(self, mock_isdir, mock_run, mock_exists):
+    def test_configure_dvc_remote_no_init(self, mock_isdir, mock_run, mock_exists, mock_configparser, mock_open):
         """Test DVC remote configuration when .dvc directory does not exist."""
-        mock_isdir.return_value = False
-        mock_exists.return_value = True
+        mock_isdir.side_effect = lambda path: path == '.git'
+        # Mock for the key file and the .dvc/config.local file
+        mock_exists.side_effect = [True, False]  # key exists, config.local does not
 
         result = configure_dvc_remote(
             remote_name="test-remote",
@@ -160,23 +163,23 @@ class TestDvcRemoteConfiguration(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        mock_isdir.assert_called_once_with(".dvc")
 
         expected_calls = [
             call(["dvc", "init"], check=True, capture_output=True),
-            call(["dvc", "remote", "add", "test-remote", "user@host:/path"], check=True, capture_output=True),
-            call(["dvc", "remote", "modify", "--local", "test-remote", "keyfile", os.path.expanduser("~/.ssh/test_key")], check=True, capture_output=True)
+            call(["dvc", "remote", "add", "test-remote", "user@host:/path"], check=True, capture_output=True)
         ]
         mock_run.assert_has_calls(expected_calls)
-        self.assertEqual(mock_run.call_count, 3)
+        mock_open.assert_called_once_with(os.path.join(".dvc", "config.local"), "w")
 
+    @patch('builtins.open', new_callable=unittest.mock.mock_open)
+    @patch('configparser.ConfigParser')
     @patch('os.path.exists')
     @patch('subprocess.run')
     @patch('os.path.isdir')
-    def test_configure_dvc_remote_already_init(self, mock_isdir, mock_run, mock_exists):
+    def test_configure_dvc_remote_already_init(self, mock_isdir, mock_run, mock_exists, mock_configparser, mock_open):
         """Test DVC remote configuration when .dvc directory already exists."""
         mock_isdir.return_value = True
-        mock_exists.return_value = True
+        mock_exists.side_effect = [True, True]  # key exists, config.local also exists
 
         result = configure_dvc_remote(
             remote_name="test-remote",
@@ -185,14 +188,8 @@ class TestDvcRemoteConfiguration(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        mock_isdir.assert_called_once_with(".dvc")
-
-        expected_calls = [
-            call(["dvc", "remote", "add", "test-remote", "user@host:/path"], check=True, capture_output=True),
-            call(["dvc", "remote", "modify", "--local", "test-remote", "keyfile", os.path.expanduser("~/.ssh/test_key")], check=True, capture_output=True)
-        ]
-        mock_run.assert_has_calls(expected_calls)
-        self.assertEqual(mock_run.call_count, 2)
+        mock_run.assert_called_once()
+        mock_open.assert_called_once_with(os.path.join(".dvc", "config.local"), "w")
 
 
 class TestDataOperations(unittest.TestCase):

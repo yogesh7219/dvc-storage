@@ -20,7 +20,12 @@ This project provides a Python-based tool to automate the setup and management o
     cd dvc-ssh-manager
     ```
 
-2.  Install the required dependencies. It is recommended to do this in a virtual environment.
+2.  Initialize a Git repository (DVC requires it):
+    ```bash
+    git init
+    ```
+
+3.  Install the required dependencies. It is recommended to do this in a virtual environment.
     ```bash
     pip install -e .
     ```
@@ -58,10 +63,13 @@ This command automates the entire setup process:
 
 ```bash
 # Using parameters from config.yaml
-dvc-ssh setup --password YOUR_PASSWORD
+python3 dvc_ssh_manager.py setup --password YOUR_PASSWORD
 
 # Overriding config with command-line options
-dvc-ssh setup --host my-server --user my-user --password YOUR_PASSWORD
+python3 dvc_ssh_manager.py setup --host my-server --user my-user --password YOUR_PASSWORD
+
+# To run without a Git repository
+python3 dvc_ssh_manager.py setup --no-scm --password YOUR_PASSWORD
 ```
 
 ### `push`

@@ -7,6 +7,7 @@ import logging
 import paramiko
 import click
 import yaml
+import configparser
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -120,7 +121,7 @@ def install_public_key(host, user, public_key_path, port=22, password=None):
             ssh.close()
 
 
-def configure_dvc_remote(remote_name, ssh_url, ssh_key_path):
+def configure_dvc_remote(remote_name, ssh_url, ssh_key_path, no_scm=False):
     """
     Configures a DVC remote with SSH authentication.
 
@@ -128,6 +129,7 @@ def configure_dvc_remote(remote_name, ssh_url, ssh_key_path):
         remote_name (str): The name for the DVC remote.
         ssh_url (str): The SSH URL for the remote storage (e.g., user@host:/path).
         ssh_key_path (str): The path to the SSH private key.
+        no_scm (bool): If True, initialize DVC without Git.
 
     Returns:
         bool: True if the remote was configured successfully, False otherwise.
@@ -138,24 +140,41 @@ def configure_dvc_remote(remote_name, ssh_url, ssh_key_path):
         return False
 
     try:
-        # 1. Initialize DVC if not already initialized
+        # 1. Check for Git repository if not in --no-scm mode
+        if not no_scm and not os.path.isdir(".git"):
+            logging.error("This is not a Git repository. Please run 'git init' or use the --no-scm flag.")
+            return False
+
+        # 2. Initialize DVC if not already initialized
         if not os.path.isdir(".dvc"):
             logging.info("Initializing DVC repository.")
-            subprocess.run(["dvc", "init"], check=True, capture_output=True)
+            init_command = ["dvc", "init"]
+            if no_scm:
+                init_command.append("--no-scm")
+            subprocess.run(init_command, check=True, capture_output=True)
 
-        # 2. Add the remote
+        # 3. Add the remote
         logging.info(f"Adding DVC remote '{remote_name}' at '{ssh_url}'.")
         subprocess.run(
             ["dvc", "remote", "add", remote_name, ssh_url],
             check=True, capture_output=True
         )
 
-        # 3. Configure the remote to use the specified SSH key
+        # 4. Configure the remote to use the specified SSH key by writing to .dvc/config.local
         logging.info(f"Configuring remote to use SSH key: {ssh_key_path}")
-        subprocess.run(
-            ["dvc", "remote", "modify", "--local", remote_name, "keyfile", ssh_key_path],
-            check=True, capture_output=True
-        )
+        config_path = os.path.join(".dvc", "config.local")
+        config = configparser.ConfigParser()
+        if os.path.exists(config_path):
+            config.read(config_path)
+
+        remote_section = f'remote "{remote_name}"'
+        if not config.has_section(remote_section):
+            config.add_section(remote_section)
+
+        config.set(remote_section, "keyfile", ssh_key_path)
+
+        with open(config_path, "w") as f:
+            config.write(f)
 
         logging.info("DVC remote configured successfully.")
         return True
@@ -244,11 +263,21 @@ def load_config(config_path='config.yaml'):
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
     """A CLI tool to manage DVC remotes over SSH."""
-    ctx.obj = load_config()
+    ctx.ensure_object(dict)
+    if ctx.invoked_subcommand is None:
+        config = load_config()
+        if not config:
+            click.echo("Could not load config.yaml. Please run the setup command manually.")
+            return
+        password = click.prompt("Please enter the SSH password for the remote server", hide_input=True)
+        run_all_steps(config, password)
+    else:
+        ctx.obj['config'] = load_config()
+
 
 @cli.command()
 @click.option('--host', help="SSH host.")
@@ -258,10 +287,11 @@ def cli(ctx):
 @click.option('--remote-name', help="DVC remote name.")
 @click.option('--remote-path', help="Path on the remote for DVC storage.")
 @click.option('--private-key-path', help="Path to the private SSH key.")
+@click.option('--no-scm', is_flag=True, help="Initialize DVC without a Git repository.")
 @click.pass_context
-def setup(ctx, host, user, port, password, remote_name, remote_path, private_key_path):
+def setup(ctx, host, user, port, password, remote_name, remote_path, private_key_path, no_scm):
     """Generates keys, installs them, and configures a DVC remote."""
-    config = ctx.obj
+    config = ctx.obj['config']
     host = host or config.get('ssh', {}).get('host')
     user = user or config.get('ssh', {}).get('user')
     port = port or config.get('ssh', {}).get('port', 22)
@@ -297,7 +327,7 @@ def setup(ctx, host, user, port, password, remote_name, remote_path, private_key
 
     # 3. Configure DVC remote
     ssh_url = f"{user}@{host}:{remote_path}"
-    configure_dvc_remote(remote_name, ssh_url, private_key_path)
+    configure_dvc_remote(remote_name, ssh_url, private_key_path, no_scm)
 
 @cli.command()
 @click.argument('paths', nargs=-1, required=True)
@@ -305,7 +335,7 @@ def setup(ctx, host, user, port, password, remote_name, remote_path, private_key
 @click.pass_context
 def push(ctx, paths, remote_name):
     """Adds and pushes data to a DVC remote."""
-    config = ctx.obj
+    config = ctx.obj['config']
     remote_name = remote_name or config.get('dvc', {}).get('remote_name')
     if not remote_name:
         logging.error("Remote name not specified. Use --remote or set it in config.yaml.")
@@ -319,7 +349,7 @@ def push(ctx, paths, remote_name):
 @click.pass_context
 def pull(ctx, paths, remote_name):
     """Pulls data from a DVC remote."""
-    config = ctx.obj
+    config = ctx.obj['config']
     remote_name = remote_name or config.get('dvc', {}).get('remote_name')
     if not remote_name:
         logging.error("Remote name not specified. Use --remote or set it in config.yaml.")
@@ -328,5 +358,51 @@ def pull(ctx, paths, remote_name):
     dvc_pull(remote_name, list(paths) if paths else None)
 
 
+def run_all_steps(config, password, no_scm=False):
+    """Runs all steps to setup DVC and push an initial file."""
+    host = config.get('ssh', {}).get('host')
+    user = user or config.get('ssh', {}).get('user')
+    port = config.get('ssh', {}).get('port', 22)
+    remote_name = config.get('dvc', {}).get('remote_name')
+    remote_path = config.get('dvc', {}).get('remote_path')
+    private_key_path = config.get('keys', {}).get('private_key_path')
+    public_key_path = f"{private_key_path}.pub"
+
+    if not all([host, user, remote_name, remote_path, private_key_path]):
+        logging.error("Configuration is incomplete. Please fill out config.yaml.")
+        return
+
+    # 1. Generate SSH key pair
+    if not generate_ssh_keypair(private_key_path):
+        return
+
+    # 2. Install public key
+    if not install_public_key(host, user, public_key_path, port, password):
+        logging.error("Could not install public key. Aborting.")
+        return
+
+    # 3. Configure DVC remote
+    ssh_url = f"{user}@{host}:{remote_path}"
+    if not configure_dvc_remote(remote_name, ssh_url, private_key_path, no_scm=no_scm):
+        return
+
+    # 4. Add and push a sample file
+    if os.path.exists("data/dummy.txt"):
+        logging.info("Pushing sample data file.")
+        dvc_add_and_push(["data/dummy.txt"], remote_name)
+    else:
+        logging.warning("No sample data file found at 'data/dummy.txt'. Skipping initial push.")
+
+    logging.info("\nSetup complete! Your DVC remote is configured and ready to use.")
+
+
 if __name__ == "__main__":
-    cli()
+    import sys
+    # If run with arguments, use the CLI. Otherwise, run all steps.
+    if len(sys.argv) > 1 and sys.argv[1] != '--no-scm':
+        cli()
+    else:
+        no_scm = '--no-scm' in sys.argv
+        config = load_config()
+        password = click.prompt("Please enter the SSH password for the remote server", hide_input=True)
+        run_all_steps(config, password, no_scm=no_scm)
